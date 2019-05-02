@@ -26,7 +26,7 @@ class Matrix extends Adapter
 
   send: (envelope, strings...) ->
     @client.getRoomIdForAlias envelope.room, (err, data) =>
-      if !err
+      unless err
         envelope.room = data.room_id
 
       for str in strings

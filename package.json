@@ -1,5 +1,5 @@
 {
-  "name": "hubot-matrix-enhanced",
+  "name": "@xy795/hubot-matrix-enhanced",
   "version": "1.0.0",
   "description": "Matrix adapter for hubot",
   "main": "src/matrix.coffee",
@@ -17,5 +17,18 @@
   },
   "peerDependencies": {
     "hubot": ">=2.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xy795/hubot-matrix-enhanced.git"
+  },
+  "keywords": [
+    "hubot",
+    "matrix",
+    "adapter"
+  ],
+  "bugs": {
+    "url": "https://github.com/xy795/hubot-matrix-enhanced/issues"
+  },
+  "homepage": "https://github.com/xy795/hubot-matrix-enhanced#readme"
 }
