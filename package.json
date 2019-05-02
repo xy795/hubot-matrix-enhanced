@@ -1,5 +1,5 @@
 {
-  "name": "@xy795/hubot-matrix-enhanced",
+  "name": "hubot-matrix-enhanced",
   "version": "1.0.2",
   "description": "Matrix adapter for hubot",
   "main": "src/matrix.coffee",
