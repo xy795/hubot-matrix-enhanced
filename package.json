@@ -13,7 +13,8 @@
     "matrix-js-sdk": "*",
     "node-localstorage": "^1.3.0",
     "parent-require": "^1.0.0",
-    "request": "^2.79.0"
+    "request": "^2.79.0",
+    "config": "*"
   },
   "peerDependencies": {
     "hubot": ">=2.0"
