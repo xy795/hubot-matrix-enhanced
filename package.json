@@ -1,0 +1,21 @@
+{
+  "name": "hubot-matrix",
+  "version": "1.0.0",
+  "description": "Matrix adapter for hubot",
+  "main": "src/matrix.coffee",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Adrian Marquis",
+  "license": "MIT",
+  "dependencies": {
+    "image-size": "^0.5.1",
+    "matrix-js-sdk": "*",
+    "node-localstorage": "^1.3.0",
+    "parent-require": "^1.0.0",
+    "request": "^2.79.0"
+  },
+  "peerDependencies": {
+    "hubot": ">=2.0"
+  }
+}
