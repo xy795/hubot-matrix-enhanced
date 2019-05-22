@@ -10,7 +10,7 @@ All parameters can be specified by environment variables or in a config file (co
 
 ENV | json key | Default | Description
 --- | --- | --- | ---
-HUBOT_MATRIX_HOST_SERVER | matrix_host_server | https://matrix.org | Address to the matrix host
-HUBOT_MATRIX_USER | matrix_user | \<Bot name\> | Username of the bot
-HUBOT_ACCESS_TOKEN | matrix_access_token |   | Access token for token authentication
-HUBOT_MATRIX_PASSWORD | matrix_password |   | Password for password authentication
+HUBOT_MATRIX_HOST | matrix.host | https://matrix.org | the host of the matrix server to connect to
+HUBOT_MATRIX_USER | matrix.user | \<Bot name\> | the hubot user for connecting to matrix
+HUBOT_MATRIX_ACCESS_TOKEN | matrix.access_token |   | access token for token authentication
+HUBOT_MATRIX_PASSWORD | matrix.password |   | password for password authentication
