@@ -1,3 +1,15 @@
+# Description:
+#   Enhanced matrix adapter for Hubot
+#
+# Configuration:
+#   Can either be done via json config file (key: matrix) or environment variables
+#
+#   ENV                         JSON          Description
+#   HUBOT_MATRIX_HOST           host          the host of the matrix server to connect to
+#   HUBOT_MATRIX_USER           user          the hubot user for connecting to matrix
+#   HUBOT_MATRIX_ACCESS_TOKEN   access_token  access token for authentication
+#   HUBOT_MATRIX_PASSWORD       password      password for authentication
+
 try
   {Robot,Adapter,TextMessage,User} = require 'hubot'
 catch
@@ -16,7 +28,6 @@ unless localStorage?
 class Matrix extends Adapter
   constructor: ->
     super
-    @robot.logger.info "Constructor"
 
   handleUnknownDevices: (err) ->
     for stranger, devices of err.devices
@@ -95,35 +106,64 @@ class Matrix extends Adapter
           @robot.logger.info error.message
           @send envelope, " #{url}"
 
-  run: ->
+  newRoom: (envelope, roomName, visibility) ->
+    vis = if visibility then "public" else "private"
+    sender = envelope.user.id
+    @robot.logger.info("Received createRoom request from #{sender} with attributes name: #{roomName} visibility: #{vis}")
+    options = { room_alias_name: roomName, name: roomName, visibility: vis, invite: [sender] }
+    @client.createRoom(options,
+      (err, data) =>
+        delete envelope["message"]
+        @robot.logger.info(data)
+        if err
+          @robot.reply(envelope, "Could not create room: #{err.message}")
+        else
+          content = {users: {}}
+          content.users["#{sender}"] = 100
+          content.users["#{@user_id}"] = 100
+          @client.sendStateEvent(data.room_id, "m.room.power_levels", content, undefined, (err, data) =>
+            if err
+              @robot.reply(envelope, "Could not promote #{sender} in new room #{roomName}: #{err.message}")
+            else
+              @robot.logger.info("Successfully created room #{roomName} for #{sender}")
+          ))
+
+
+  load_config: ->
     login_data = {}
     login_type = 'undefined'
-    @host_url = process.env.HUBOT_MATRIX_HOST_SERVER
-    if !@host_url and config.has('matrix_host_server')
-      @host_url = config.get('matrix_host_server')
-    else
-      @host_url = 'https://matrix.org'
+
+    if config.has('matrix.host')
+      @host_url = config.get('matrix.host')
+    @host_url = process.env.HUBOT_MATRIX_HOST or @host_url or 'https://matrix.org'
 
     @robot.logger.info "Run #{@robot.name} with matrix server #{@host_url}"
 
-    login_data.user = process.env.HUBOT_MATRIX_USER
-    if !login_data.user
-      if config.has('matrix_user')
-        login_data.user = config.get('matrix_user')
-      else
-        login_data.user = @robot.name
+    if config.has('matrix.user')
+      login_data.user = config.get('matrix.user')
+    login_data.user = process.env.HUBOT_MATRIX_USER or login_data.user or @robot.name
 
-    login_data.token = process.env.HUBOT_ACCESS_TOKEN
-    if !login_data.token and config.has('matrix_access_token')
-      login_data.token = config.get('matrix_access_token')
+
+    if config.has('matrix.access_token')
+      login_data.token = config.get('matrix.access_token')
+    login_data.token = process.env.HUBOT_ACCESS_TOKEN or login_data.token
+
+
     if login_data.token
       login_type = 'm.login.token'
-    else
-      login_data.password = process.env.HUBOT_MATRIX_PASSWORD
-      if !login_data.password and config.has('matrix_password')
-        login_data.password = config.get('matrix_password')
-        login_type = 'm.login.password'
+    else if config.has('matrix.password')
+      login_data.password = config.get('matrix.password')
 
+    login_data.password = process.env.HUBOT_MATRIX_PASSWORD or login_data.password
+
+    if login_data.password
+      login_type = 'm.login.password'
+
+    [login_data, login_type]
+
+
+  run: ->
+    [login_data, login_type] = @load_config()
     client = sdk.createClient(@host_url)
     client.login login_type, login_data, (err, data) =>
       if err
