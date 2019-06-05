@@ -7,8 +7,8 @@
 #   ENV                         JSON          Description
 #   HUBOT_MATRIX_HOST           host          the host of the matrix server to connect to
 #   HUBOT_MATRIX_USER           user          the hubot user for connecting to matrix
-#   HUBOT_MATRIX_ACCESS_TOKEN   access_token  access token for authentication
-#   HUBOT_MATRIX_PASSWORD       password      password for authentication
+#   HUBOT_MATRIX_ACCESS_TOKEN   access_token  access token for token authentication
+#   HUBOT_MATRIX_PASSWORD       password      password for password authentication
 
 try
   {Robot,Adapter,TextMessage,User} = require 'hubot'
@@ -19,7 +19,11 @@ catch
 sdk = require 'matrix-js-sdk'
 request = require 'request'
 sizeOf = require 'image-size'
+deferred = require 'deferred'
 config = require 'config'
+
+ENV_PREFIX = "HUBOT_MATRIX"
+JSON_PREFIX = "matrix"
 
 unless localStorage?
   {LocalStorage} = require('node-localstorage')
@@ -28,6 +32,17 @@ unless localStorage?
 class Matrix extends Adapter
   constructor: ->
     super
+
+  loadConfigValue: (key, default_value=undefined ) ->
+    result = process.env["#{ENV_PREFIX}_#{key.toUpperCase()}"]
+    if result
+      return result
+
+    json_key = "#{JSON_PREFIX}.#{key}"
+    if config.has(json_key)
+      return config.get(json_key)
+
+    default_value
 
   handleUnknownDevices: (err) ->
     for stranger, devices of err.devices
@@ -130,54 +145,44 @@ class Matrix extends Adapter
 
 
   load_config: ->
-    login_data = {}
-    login_type = 'undefined'
+    loginData = {}
+    loginData.baseUrl = @loadConfigValue('host', 'https://matrix.org')
 
-    if config.has('matrix.host')
-      @host_url = config.get('matrix.host')
-    @host_url = process.env.HUBOT_MATRIX_HOST or @host_url or 'https://matrix.org'
+    @robot.logger.info "Run #{@robot.name} with matrix server #{loginData.baseUrl}"
 
-    @robot.logger.info "Run #{@robot.name} with matrix server #{@host_url}"
+    user = @loadConfigValue('user', @robot.name)
+    re = new RegExp("^@(.*):#{loginData.baseUrl.replace(/[-[\]{}()*+?.,\\^$|]/g, "\\$&")}$")
+    unless re.test(user)
+      user = "@#{user}:#{loginData.baseUrl.replace(/https?:\/\//, '')}"
+    loginData.userId = user
+    loginData.accessToken = @loadConfigValue('access_token')
 
-    if config.has('matrix.user')
-      login_data.user = config.get('matrix.user')
-    login_data.user = process.env.HUBOT_MATRIX_USER or login_data.user or @robot.name
+    def = deferred()
 
-
-    if config.has('matrix.access_token')
-      login_data.token = config.get('matrix.access_token')
-    login_data.token = process.env.HUBOT_ACCESS_TOKEN or login_data.token
-
-
-    if login_data.token
-      login_type = 'm.login.token'
-    else if config.has('matrix.password')
-      login_data.password = config.get('matrix.password')
-
-    login_data.password = process.env.HUBOT_MATRIX_PASSWORD or login_data.password
-
-    if login_data.password
-      login_type = 'm.login.password'
-
-    [login_data, login_type]
-
+    if loginData.accessToken
+      def.resolve loginData
+    else
+      password = @loadConfigValue('password')
+      client = sdk.createClient(loginData.baseUrl)
+      client.login 'm.login.password', { user: user, password: password }, (err, data) =>
+        if err
+          def.reject err
+        else
+          @robot.logger.info "Logged in #{data.user_id} on device #{data.device_id} on server #{loginData.baseUrl}"
+          delete loginData.user
+          loginData.accessToken = data.access_token
+          loginData.userId = data.user_id
+          loginData.deviceId = data.device_id
+          def.resolve loginData
+    def.promise
 
   run: ->
-    [login_data, login_type] = @load_config()
-    client = sdk.createClient(@host_url)
-    client.login login_type, login_data, (err, data) =>
-      if err
-        @robot.logger.error err
-        return
-      @user_id = data.user_id
-      @access_token = data.access_token
-      @device_id = data.device_id
-      @robot.logger.info "Logged in #{@user_id} on device #{@device_id} on server #{@host_url}"
-      @client = sdk.createClient
-        baseUrl: @host_url
-        accessToken: @access_token
-        userId: @user_id
-        sessionStore: new sdk.WebStorageSessionStore(localStorage)
+    @load_config().then (data) =>
+      @host_url = data.baseUrl
+      data.sessionStore = new sdk.WebStorageSessionStore(localStorage)
+      @client = sdk.createClient data
+    .then (data) =>
+      @user_id = @client.getUserId()
       @client.on 'sync', (state, prevState, data) =>
         switch state
           when "PREPARED"
@@ -199,6 +204,9 @@ class Matrix extends Adapter
           @client.joinRoom(member.roomId).done =>
             @robot.logger.info "Auto-joined #{member.roomId}"
       @client.startClient 0
+    .catch (err) =>
+      @robot.logger.error 'Error during authentication', err
+
 
 exports.use = (robot) ->
   new Matrix robot
