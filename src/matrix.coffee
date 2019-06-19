@@ -9,6 +9,7 @@
 #   HUBOT_MATRIX_USER           user          the hubot user for connecting to matrix
 #   HUBOT_MATRIX_ACCESS_TOKEN   access_token  access token for token authentication
 #   HUBOT_MATRIX_PASSWORD       password      password for password authentication
+#   HUBOT_MATRIX_MAIN_ROOM      main_room     name or id of the main (auto-join) room (used for user discovery)
 
 try
   {Robot,Adapter,TextMessage,User} = require 'hubot'
@@ -33,10 +34,21 @@ class Matrix extends Adapter
   constructor: ->
     super
 
-  loadConfigValue: (key, default_value=undefined ) ->
+  resolveRoom: (roomIdOrAlias) ->
+    def = deferred()
+    @client.getRoomIdForAlias roomIdOrAlias, (err, data) =>
+      if err
+        if err.errcode == 'M_UNKNOWN'
+          def.resolve(roomIdOrAlias)
+        else
+          def.reject(err)
+      else
+        def.resolve(data.room_id)
+    def.promise
+
+  loadConfigValue: (key, default_value=undefined) ->
     result = process.env["#{ENV_PREFIX}_#{key.toUpperCase()}"]
-    if result
-      return result
+    return result if result
 
     json_key = "#{JSON_PREFIX}.#{key}"
     if config.has(json_key)
@@ -51,9 +63,8 @@ class Matrix extends Adapter
         @client.setDeviceKnown(stranger, device)
 
   send: (envelope, strings...) ->
-    @client.getRoomIdForAlias envelope.room, (err, data) =>
-      unless err
-        envelope.room = data.room_id
+    @resolveRoom envelope.room.then (roomId) =>
+      envelope.room = roomId
 
       for str in strings
         @robot.logger.info "Sending to #{envelope.room}: #{str}"
@@ -143,7 +154,6 @@ class Matrix extends Adapter
               @robot.logger.info("Successfully created room #{roomName} for #{sender}")
           ))
 
-
   load_config: ->
     loginData = {}
     loginData.baseUrl = @loadConfigValue('host', 'https://matrix.org')
@@ -156,6 +166,8 @@ class Matrix extends Adapter
       user = "@#{user}:#{loginData.baseUrl.replace(/https?:\/\//, '')}"
     loginData.userId = user
     loginData.accessToken = @loadConfigValue('access_token')
+
+    @main_room = @loadConfigValue('main_room')
 
     def = deferred()
 
@@ -203,6 +215,13 @@ class Matrix extends Adapter
         if member.membership == 'invite' and member.userId == @user_id
           @client.joinRoom(member.roomId).done =>
             @robot.logger.info "Auto-joined #{member.roomId}"
+        else if @main_room
+          @resolveRoom(@main_room).then (room_id) =>
+            if room_id == member.roomId and member.membership == 'join' and member.userId != @user_id
+              @robot.brain.userForId member.userId
+              @emit 'user_joined', {
+                userId: member.userId
+              }
       @client.startClient 0
     .catch (err) =>
       @robot.logger.error 'Error during authentication', err

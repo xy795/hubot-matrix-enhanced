@@ -14,3 +14,4 @@ HUBOT_MATRIX_HOST | matrix.host | https://matrix.org | the host of the matrix se
 HUBOT_MATRIX_USER | matrix.user | \<Bot name\> | the hubot user for connecting to matrix
 HUBOT_MATRIX_ACCESS_TOKEN | matrix.access_token |   | access token for token authentication
 HUBOT_MATRIX_PASSWORD | matrix.password |   | password for password authentication
+HUBOT_MATRIX_MAIN_ROOM | main_room | name or id of the main (auto-join) room (used for user discovery)
