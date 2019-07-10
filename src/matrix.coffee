@@ -44,10 +44,13 @@ class Matrix extends Adapter
   resolveRoom: (roomIdOrAlias) ->
     room = @decorateRoom(roomIdOrAlias)
     new Promise.Promise (resolve, reject) =>
+      if room.startsWith('!') and room = roomIdOrAlias
+        resolve room
+        return
       @client.getRoomIdForAlias(room)
         .then (data) ->
           resolve data.room_id
-        .catch (err) ->
+        .catch (err) =>
           if (err.errcode == 'M_UNKNOWN' and err.httpStatus == 500)
             resolve roomIdOrAlias
           else
