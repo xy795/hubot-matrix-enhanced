@@ -20,7 +20,7 @@ catch
 sdk = require 'matrix-js-sdk'
 request = require 'request'
 sizeOf = require 'image-size'
-deferred = require 'deferred'
+Promise = require 'bluebird'
 config = require 'config'
 
 ENV_PREFIX = "HUBOT_MATRIX"
@@ -34,22 +34,24 @@ class Matrix extends Adapter
   constructor: ->
     super
 
+  decorateRoom: (room) ->
+    room += ":#{@domain}" unless @local_suffix.test(room)
+    room = room.replace /\ /g, '_'
+    unless room.startsWith('!') or room.startsWith('#')
+      room = "##{room}"
+    room
+
   resolveRoom: (roomIdOrAlias) ->
-    roomIdOrAlias = roomIdOrAlias.replace /\ /g, '_'
-    room_name = roomIdOrAlias
-    unless @group_name_expr.test(roomIdOrAlias)
-      room_name = "##{roomIdOrAlias}:#{@domain}"
-    def = deferred()
-    @client.getRoomIdForAlias(room_name)
-      .then (data) ->
-        def.resolve data.room_id
-      .catch (err) ->
-        if err.errcode == 'M_UNKNOWN' and err.httpStatus == 500
-          def.resolve roomIdOrAlias
-        else
-          def.reject {err: err.message, room: roomIdOrAlias}
-          a = 1 # JS -> stupid
-    def.promise
+    room = @decorateRoom(roomIdOrAlias)
+    new Promise.Promise (resolve, reject) =>
+      @client.getRoomIdForAlias(room)
+        .then (data) ->
+          resolve data.room_id
+        .catch (err) ->
+          if (err.errcode == 'M_UNKNOWN' and err.httpStatus == 500)
+            resolve roomIdOrAlias
+          else
+            reject {err: err.message, room: roomIdOrAlias}
 
   loadConfigValue: (key, default_value=undefined) ->
     result = process.env["#{ENV_PREFIX}_#{key.toUpperCase()}"]
@@ -138,30 +140,31 @@ class Matrix extends Adapter
           @send envelope, " #{url}"
 
   newRoom: (roomName, visibility, requestor=undefined, setPowerLevels=true) ->
-    visibility_str = 'public' if visibility
-    visibility_str = 'private' unless visibility
+    if visibility
+      visibility_str = 'public'
+    else
+      visibility_str = 'private'
     alias = roomName.replace /\ /g, '_'
     from = ''
     options = { room_alias_name: alias, name: roomName, visibility: visibility_str}
     if requestor
-      from = "from #{requestor} " if requestor
+      from = "from #{requestor} "
       options['invite'] = [requestor]
-    @robot.logger.info("Received createRoom request #{from}{ name: #{options.name}, alias: #{options.room_alias_name},
-visibility: #{options.visibility}")
-    def = deferred()
-    @client.createRoom(options)
-      .then (data) =>
-        if requestor and setPowerLevels
-          content = {users: {}}
-          content.users["#{requestor}"] = 100
-          content.users["#{@user_id}"] = 100
-          @client.sendStateEvent(data.room_id, "m.room.power_levels", content, undefined)
-            .catch(err) ->
-              def.reject("Could not promote #{requestor} in new room #{roomName}: #{err.message}")
-        def.resolve({message: "Successfully created room #{roomName}"})
-      .catch (err) =>
-        def.reject "Could not create room: #{err.message}"
-    def.promise
+    @robot.logger.info("Received createRoom request #{from}{ name: #{options.name}, alias: #{options.room_alias_name}, visibility: #{options.visibility} }")
+    new Promise.Promise (resolve, reject) =>
+      @client.createRoom(options)
+        .then (data) =>
+          @robot.logger.info("Created room #{roomName}.")
+          if requestor and setPowerLevels
+            content = {users: {}}
+            content.users["#{requestor}"] = 100
+            content.users["#{@user_id}"] = 100
+            @client.sendStateEvent(data.room_id, "m.room.power_levels", content, undefined)
+              .catch(err) ->
+                reject "Could not promote #{requestor} in new room #{roomName}: #{err.message}"
+          resolve "Successfully created room #{roomName}"
+        .catch (err) ->
+          reject "Could not create room: #{err.message}"
 
 
   load_config: ->
@@ -172,7 +175,7 @@ visibility: #{options.visibility}")
 
     @domain = loginData.baseUrl.replace(/https?:\/\//, '')
     @domain_escaped = @domain.replace(/[-[\]{}()*+?.,\\^$|]/g, "\\$&")
-    @group_name_expr = new RegExp("^#.*:#{@domain_escaped}$")
+    @local_suffix = new RegExp("^.*:#{@domain_escaped}$")
 
     user = @loadConfigValue('user', @robot.name)
     re = new RegExp("^@(.*):#{@domain_escaped}$")
@@ -183,60 +186,59 @@ visibility: #{options.visibility}")
 
     @main_room = @loadConfigValue('main_room')
 
-    def = deferred()
-
-    if loginData.accessToken
-      def.resolve loginData
-    else
-      password = @loadConfigValue('password')
-      client = sdk.createClient(loginData.baseUrl)
-      client.login 'm.login.password', { user: user, password: password }, (err, data) =>
-        if err
-          def.reject err
-        else
-          @robot.logger.info "Logged in #{data.user_id} on device #{data.device_id} on server #{loginData.baseUrl}"
-          delete loginData.user
-          loginData.accessToken = data.access_token
-          loginData.userId = data.user_id
-          loginData.deviceId = data.device_id
-          def.resolve loginData
-    def.promise
+    new Promise.Promise (resolve, reject) ->
+      if loginData.accessToken
+        resolve loginData
+      else
+        password = @loadConfigValue('password')
+        client = sdk.createClient(loginData.baseUrl)
+        client.login 'm.login.password', { user: user, password: password }, (err, data) =>
+          if err
+            reject err
+          else
+            @robot.logger.info "Logged in #{data.user_id} on device #{data.device_id} on server #{loginData.baseUrl}"
+            delete loginData.user
+            loginData.accessToken = data.access_token
+            loginData.userId = data.user_id
+            loginData.deviceId = data.device_id
+          resolve loginData
 
   run: ->
-    @load_config().then (data) =>
-      @host_url = data.baseUrl
-      data.sessionStore = new sdk.WebStorageSessionStore(localStorage)
-      @client = sdk.createClient data
-    .then (data) =>
-      @user_id = @client.getUserId()
-      @client.on 'sync', (state, prevState, data) =>
-        switch state
-          when "PREPARED"
-            @robot.logger.info "Synced #{@client.getRooms().length} rooms"
-            @emit 'connected'
-      @client.on 'Room.timeline', (event, room, toStartOfTimeline) =>
-        if event.getType() == 'm.room.message' and toStartOfTimeline == false
-          @client.setPresence "online"
-          message = event.getContent()
-          name = event.getSender()
-          user = @robot.brain.userForId name
-          user.room = room.roomId
-          if user.name != @user_id
-            @robot.logger.info "Received message: #{JSON.stringify message} in room: #{user.room}, from: #{user.name}."
-            @receive new TextMessage user, message.body if message.msgtype == "m.text"
-            @client.sendReadReceipt(event) if message.msgtype != "m.text" or message.body.indexOf(@robot.name) != -1
-      @client.on 'RoomMember.membership', (event, member) =>
-        if member.membership == 'invite' and member.userId == @user_id
-          @client.joinRoom(member.roomId).done =>
-            @robot.logger.info "Auto-joined #{member.roomId}"
-        else if @main_room
-          @resolveRoom(@main_room).then (room_id) =>
-            if room_id == member.roomId and member.membership == 'join' and member.userId != @user_id
-              brainUser = @robot.brain.userForId member.userId
-              @robot.emit 'user_joined', brainUser
-      @client.startClient 0
-    .catch (err) =>
-      @robot.logger.error 'Error during authentication', err
+    @load_config()
+      .then (data) =>
+        @host_url = data.baseUrl
+        data.sessionStore = new sdk.WebStorageSessionStore(localStorage)
+        @client = sdk.createClient data
+      .then (data) =>
+        @user_id = @client.getUserId()
+        @client.on 'sync', (state, prevState, data) =>
+          switch state
+            when "PREPARED"
+              @robot.logger.info "Synced #{@client.getRooms().length} rooms"
+              @emit 'connected'
+        @client.on 'Room.timeline', (event, room, toStartOfTimeline) =>
+          if event.getType() == 'm.room.message' and toStartOfTimeline == false
+            @client.setPresence "online"
+            message = event.getContent()
+            name = event.getSender()
+            user = @robot.brain.userForId name
+            user.room = room.roomId
+            if user.name != @user_id
+              @robot.logger.info "Received message: #{JSON.stringify message} in room: #{user.room}, from: #{user.name}."
+              @receive new TextMessage user, message.body if message.msgtype == "m.text"
+              @client.sendReadReceipt(event) if message.msgtype != "m.text" or message.body.indexOf(@robot.name) != -1
+        @client.on 'RoomMember.membership', (event, member) =>
+          if member.membership == 'invite' and member.userId == @user_id
+            @client.joinRoom(member.roomId).done =>
+              @robot.logger.info "Auto-joined #{member.roomId}"
+          else if @main_room
+            @resolveRoom(@main_room).then (room_id) =>
+              if room_id == member.roomId and member.membership == 'join' and member.userId != @user_id
+                brainUser = @robot.brain.userForId member.userId
+                @robot.emit 'user_joined', brainUser
+        @client.startClient 0
+      .catch (err) =>
+        @robot.logger.error 'Error during authentication', err
 
 
 exports.use = (robot) ->
