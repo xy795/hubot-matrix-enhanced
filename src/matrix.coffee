@@ -35,15 +35,20 @@ class Matrix extends Adapter
     super
 
   resolveRoom: (roomIdOrAlias) ->
+    roomIdOrAlias = roomIdOrAlias.replace /\ /g, '_'
+    room_name = roomIdOrAlias
+    unless @group_name_expr.test(roomIdOrAlias)
+      room_name = "##{roomIdOrAlias}:#{@domain}"
     def = deferred()
-    @client.getRoomIdForAlias roomIdOrAlias, (err, data) =>
-      if err
-        if err.errcode == 'M_UNKNOWN'
-          def.resolve(roomIdOrAlias)
+    @client.getRoomIdForAlias(room_name)
+      .then (data) ->
+        def.resolve data.room_id
+      .catch (err) ->
+        if err.errcode == 'M_UNKNOWN' and err.httpStatus == 500
+          def.resolve roomIdOrAlias
         else
-          def.reject(err)
-      else
-        def.resolve(data.room_id)
+          def.reject {err: err.message, room: roomIdOrAlias}
+          a = 1 # JS -> stupid
     def.promise
 
   loadConfigValue: (key, default_value=undefined) ->
@@ -63,7 +68,7 @@ class Matrix extends Adapter
         @client.setDeviceKnown(stranger, device)
 
   send: (envelope, strings...) ->
-    @resolveRoom envelope.room.then (roomId) =>
+    (@resolveRoom envelope.room).then (roomId) =>
       envelope.room = roomId
 
       for str in strings
@@ -132,27 +137,32 @@ class Matrix extends Adapter
           @robot.logger.info error.message
           @send envelope, " #{url}"
 
-  newRoom: (envelope, roomName, visibility) ->
-    vis = if visibility then "public" else "private"
-    sender = envelope.user.id
-    @robot.logger.info("Received createRoom request from #{sender} with attributes name: #{roomName} visibility: #{vis}")
-    options = { room_alias_name: roomName, name: roomName, visibility: vis, invite: [sender] }
-    @client.createRoom(options,
-      (err, data) =>
-        delete envelope["message"]
-        @robot.logger.info(data)
-        if err
-          @robot.reply(envelope, "Could not create room: #{err.message}")
-        else
+  newRoom: (roomName, visibility, requestor=undefined, setPowerLevels=true) ->
+    visibility_str = 'public' if visibility
+    visibility_str = 'private' unless visibility
+    alias = roomName.replace /\ /g, '_'
+    from = ''
+    options = { room_alias_name: alias, name: roomName, visibility: visibility_str}
+    if requestor
+      from = "from #{requestor} " if requestor
+      options['invite'] = [requestor]
+    @robot.logger.info("Received createRoom request #{from}{ name: #{options.name}, alias: #{options.room_alias_name},
+visibility: #{options.visibility}")
+    def = deferred()
+    @client.createRoom(options)
+      .then (data) =>
+        if requestor and setPowerLevels
           content = {users: {}}
-          content.users["#{sender}"] = 100
+          content.users["#{requestor}"] = 100
           content.users["#{@user_id}"] = 100
-          @client.sendStateEvent(data.room_id, "m.room.power_levels", content, undefined, (err, data) =>
-            if err
-              @robot.reply(envelope, "Could not promote #{sender} in new room #{roomName}: #{err.message}")
-            else
-              @robot.logger.info("Successfully created room #{roomName} for #{sender}")
-          ))
+          @client.sendStateEvent(data.room_id, "m.room.power_levels", content, undefined)
+            .catch(err) ->
+              def.reject("Could not promote #{requestor} in new room #{roomName}: #{err.message}")
+        def.resolve({message: "Successfully created room #{roomName}"})
+      .catch (err) =>
+        def.reject "Could not create room: #{err.message}"
+    def.promise
+
 
   load_config: ->
     loginData = {}
@@ -160,10 +170,14 @@ class Matrix extends Adapter
 
     @robot.logger.info "Run #{@robot.name} with matrix server #{loginData.baseUrl}"
 
+    @domain = loginData.baseUrl.replace(/https?:\/\//, '')
+    @domain_escaped = @domain.replace(/[-[\]{}()*+?.,\\^$|]/g, "\\$&")
+    @group_name_expr = new RegExp("^#.*:#{@domain_escaped}$")
+
     user = @loadConfigValue('user', @robot.name)
-    re = new RegExp("^@(.*):#{loginData.baseUrl.replace(/[-[\]{}()*+?.,\\^$|]/g, "\\$&")}$")
+    re = new RegExp("^@(.*):#{@domain_escaped}$")
     unless re.test(user)
-      user = "@#{user}:#{loginData.baseUrl.replace(/https?:\/\//, '')}"
+      user = "@#{user}:#{@domain}"
     loginData.userId = user
     loginData.accessToken = @loadConfigValue('access_token')
 
@@ -218,10 +232,8 @@ class Matrix extends Adapter
         else if @main_room
           @resolveRoom(@main_room).then (room_id) =>
             if room_id == member.roomId and member.membership == 'join' and member.userId != @user_id
-              @robot.brain.userForId member.userId
-              @emit 'user_joined', {
-                userId: member.userId
-              }
+              brainUser = @robot.brain.userForId member.userId
+              @robot.emit 'user_joined', brainUser
       @client.startClient 0
     .catch (err) =>
       @robot.logger.error 'Error during authentication', err
