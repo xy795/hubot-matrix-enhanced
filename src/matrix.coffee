@@ -142,7 +142,7 @@ class Matrix extends Adapter
           @robot.logger.info error.message
           @send envelope, " #{url}"
 
-  newRoom: (roomName, visibility, requestor=undefined, setPowerLevels=true) ->
+  newRoom: (roomName, visibility, requestor=undefined, setPowerLevels=true, tryCount=0) ->
     if visibility
       visibility_str = 'public'
     else
@@ -167,6 +167,9 @@ class Matrix extends Adapter
                 reject "Could not promote #{requestor} in new room #{roomName}: #{err.message}"
           resolve "Successfully created room #{roomName}"
         .catch (err) ->
+          if err.errcode == 'M_LIMIT_EXCEEDED' and tryCount < 5
+            @robot.logger.error("[CREATE ROOM] Try ##{tryCount}, room: #{roomName}")
+            return setTimeout(@newRoom, err.retry_after_ms+1000, roomName, visibility, requestor, setPowerLevels, tryCount+1)
           reject "Could not create room: #{err.message}"
 
 
