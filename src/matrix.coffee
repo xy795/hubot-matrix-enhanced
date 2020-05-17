@@ -242,7 +242,7 @@ class Matrix extends Adapter
               if room_id == member.roomId and member.membership == 'join' and member.userId != @user_id
                 brainUser = @robot.brain.userForId member.userId
                 @robot.emit 'user_joined', brainUser
-        @client.startClient 0
+        @client.startClient {pendingEventOrdering: 'detached'}
       .catch (err) =>
         @robot.logger.error 'Error during authentication', err
 
