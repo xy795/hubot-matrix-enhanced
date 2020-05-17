@@ -133,7 +133,7 @@ class Matrix extends Adapter
           @robot.logger.info "Image has dimensions #{JSON.stringify dims}, size #{body.length}"
           dims.type = 'jpeg' if dims.type == 'jpg'
           info = { mimetype: "image/#{dims.type}", h: dims.height, w: dims.width, size: body.length }
-          @client.uploadContent(body, name: url, type: info.mimetype, rawResponse: false, onlyContentUri: true).done (content_uri) =>
+          @client.uploadContent(body, name: url, type: info.mimetype, rawResponse: false, onlyContentUri: true).then (content_uri) =>
             @client.sendImageMessage(envelope.room, content_uri, info, url).catch (err) =>
               if err.name == 'UnknownDeviceError'
                 @handleUnknownDevices err
